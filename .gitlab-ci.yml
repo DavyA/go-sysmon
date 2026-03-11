@@ -1,0 +1,37 @@
+image: golang:1.25.6  # Matching the version in go.mod
+
+stages:
+  - lint
+  - build
+  - test
+
+# Cache dependencies to speed up builds
+cache:
+  paths:
+    - .cache/go-build
+    - /go/pkg/mod
+
+variables:
+  GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+
+lint:
+  stage: lint
+  image: golangci/golangci-lint:v1.64.5 # Latest stable version
+  script:
+    - golangci-lint run -v
+  allow_failure: true # Optional
+
+build_linux:
+  stage: build
+  script:
+    - go mod download
+    - go build -v -o sysmon
+  artifacts:
+    paths:
+      - sysmon
+    expire_in: 1 week
+
+unit_tests:
+  stage: test
+  script:
+    - go test -v ./...
