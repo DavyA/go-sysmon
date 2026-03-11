@@ -22,7 +22,7 @@ func (s *SystemState) Render() {
 	// 1. HEADER (Sempre visibile)
 	renderHeader(s, cols, &sb)
 
-	if rows < 10 || cols < 40 {
+	if rows < 5 || cols < 30 {
 		sb.WriteString("\r\n  Terminal too small!\r\n")
 	} else {
 		switch s.CurrentView {
@@ -31,7 +31,7 @@ func (s *SystemState) Render() {
 		case ViewGPU:
 			RenderGPU(s, cols, &sb)
 		case ViewPIDs:
-			sb.WriteString(fmt.Sprintf("\r\n  %s[ Processes View - Under Construction ]%s\r\n", Cyan, Reset))
+			renderPIDs(s, cols, rows, &sb)
 		case ViewInfo:
 			RenderNeofetch(s, &sb)
 		case ViewCPU:
@@ -45,7 +45,7 @@ func (s *SystemState) Render() {
 	fmt.Print(sb.String())
 }
 
-func renderSideBySide(s *SystemState, cols int, sb *strings.Builder) {
+func renderSummaryLine(s *SystemState, cols int, sb *strings.Builder) {
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 
@@ -69,7 +69,14 @@ func renderSideBySide(s *SystemState, cols int, sb *strings.Builder) {
 		Bold, sysPower, Reset, Bold, maxTemp, Reset, Bold, batStatus, Reset, Bold, getUptime(), Reset)
 
 	sb.WriteString(fmt.Sprintf("\r\n  %s\r\n", summary))
-	sb.WriteString(fmt.Sprintf("  %s%s%s\r\n", Gray, strings.Repeat("┈", cols-4), Reset)) // 1. Definiamo i pesi: W1+W2 = cols - 7
+	sb.WriteString(fmt.Sprintf("  %s%s%s\r\n", Gray, strings.Repeat("┈", cols-4), Reset))
+}
+
+func renderSideBySide(s *SystemState, cols int, sb *strings.Builder) {
+	renderSummaryLine(s, cols, sb)
+
+	s.Mu.RLock()
+	defer s.Mu.RUnlock() // 1. Definiamo i pesi: W1+W2 = cols - 7
 	available := cols - 7
 	if available < 10 {
 		return
@@ -280,6 +287,94 @@ func RenderGPU(s *SystemState, cols int, sb *strings.Builder) {
 				memBar := CreateSolidBar(memPct)
 				sb.WriteString(fmt.Sprintf("  VRAM:   [%s] %d / %d MB\r\n", memBar, g.MemUsed, g.MemTotal))
 			}
+		}
+	}
+}
+func renderPIDs(s *SystemState, cols int, rows int, sb *strings.Builder) {
+	renderSummaryLine(s, cols, sb)
+
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+
+	// Title centered
+	title := " PROCESS LIST (Sort: CPU%) "
+	sb.WriteString(fmt.Sprintf("%s%s%s\r\n", Bold+Cyan, title, Reset))
+
+	// Table Header with consistent spacing
+	header := fmt.Sprintf(" %-7s %-12s %6s %9s %-5s %s", "PID", "USER", "CPU%", "MEM", "STAT", "COMMAND")
+	sb.WriteString(fmt.Sprintf("%s%s%s\r\n", Bold+Blue, header, Reset))
+	sb.WriteString(fmt.Sprintf("%s%s%s\r\n", Gray, strings.Repeat("┈", cols-4), Reset))
+
+	// Header(3) + Summary(3) + PID Header(3) + Footer(1) = 10
+	startRow := 10
+	availableRows := rows - startRow - 2
+	if availableRows < 1 {
+		return
+	}
+
+	procs := s.Processes
+	numProcs := len(procs)
+	if numProcs == 0 {
+		sb.WriteString("\r\n   Collecting process info...\r\n")
+		return
+	}
+
+	// Clamp cursor
+	if s.ProcCursor >= numProcs {
+		s.ProcCursor = numProcs - 1
+	}
+	if s.ProcCursor < 0 {
+		s.ProcCursor = 0
+	}
+
+	startIdx := 0
+	if s.ProcCursor >= availableRows {
+		startIdx = s.ProcCursor - availableRows + 1
+	}
+
+	endIdx := startIdx + availableRows
+	if endIdx > numProcs {
+		endIdx = numProcs
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		p := procs[i]
+		pidStr := fmt.Sprintf("%-7d", p.PID)
+		userStr := fmt.Sprintf("%-12s", p.User)
+		if len(userStr) > 12 {
+			userStr = userStr[:11] + "…"
+		}
+
+		cpuColor := Reset
+		if p.CPU > 50 {
+			cpuColor = Red
+		} else if p.CPU > 10 {
+			cpuColor = Yellow
+		}
+		cpuStr := fmt.Sprintf("%s%5.1f%%%s", cpuColor, p.CPU, Reset)
+		
+		memStr := fmt.Sprintf("%7d MB", p.MemRSS)
+		statStr := fmt.Sprintf("%-5s", p.Status)
+		gpuStr := "   "
+		if p.IsGPU {
+			gpuStr = Bold + Green + "[G]" + Reset
+		}
+		cmdStr := p.CmdLine
+
+		line := fmt.Sprintf(" %s %s %s %s %s %s %s", pidStr, userStr, cpuStr, memStr, statStr, gpuStr, cmdStr)
+
+		if i == s.ProcCursor {
+			// Strippiamo i colori per calcolare la lunghezza visibile nel highlight
+			vLinePlain := fmt.Sprintf(" %s %s %5.1f%% %s %s %s %s", pidStr, userStr, p.CPU, memStr, statStr, strings.Trim(gpuStr, Bold+Green+Reset), cmdStr)
+			if VisibleLen(vLinePlain) > cols-1 {
+				vLinePlain = vLinePlain[:cols-4] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("\033[44;37m%-*s\033[0m\r\n", cols, vLinePlain))
+		} else {
+			if VisibleLen(line) > cols-1 {
+				line = line[:cols-4] + "..."
+			}
+			sb.WriteString(line + "\r\n")
 		}
 	}
 }

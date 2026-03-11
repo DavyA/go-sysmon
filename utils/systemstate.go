@@ -58,6 +58,8 @@ type SystemState struct {
 	GPUs        []collector.GPUStatus
 	Battery     collector.BatteryStats
 	Disks       []collector.Partition
+	Processes   []collector.Process
+	ProcCursor  int
 	CPUHistory  []float64
 	GPUHistory  map[string][]float64
 	CurrentView ViewMode

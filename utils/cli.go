@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"sysmon/collector"
 	"unsafe"
 )
 
@@ -134,8 +135,8 @@ func HandleInput(state *SystemState, RedrawChan chan bool) {
 	defer RestoreMode(os.Stdin.Fd(), oldState)
 	buf := make([]byte, 3)
 	for {
-		n, _ := os.Stdin.Read(buf)
-		if n > 0 {
+		n, err := os.Stdin.Read(buf)
+		if n > 0 && err == nil {
 			state.Mu.Lock()
 			switch buf[0] {
 			case '1':
@@ -153,11 +154,33 @@ func HandleInput(state *SystemState, RedrawChan chan bool) {
 			case '5':
 				state.CurrentView = ViewInfo
 				RedrawChan <- true
+			case 'k':
+				if state.CurrentView == ViewPIDs && state.ProcCursor < len(state.Processes) {
+					pid := state.Processes[state.ProcCursor].PID
+					_ = collector.KillProcess(pid)
+					RedrawChan <- true
+				}
+			case 27: // ESC / Arrow keys (\x1b[A, \x1b[B)
+				if n == 3 && buf[1] == 91 {
+					if buf[2] == 65 { // UP
+						if state.ProcCursor > 0 {
+							state.ProcCursor--
+							RedrawChan <- true
+						}
+					} else if buf[2] == 66 { // DOWN
+						if state.ProcCursor < len(state.Processes)-1 {
+							state.ProcCursor++
+							RedrawChan <- true
+						}
+					}
+				}
 			case 'q', 3: // 'q' o CTRL+C
 				fmt.Print("\033[?25h\033[?1049l")
 				RestoreMode(os.Stdin.Fd(), oldState)
 				os.Exit(0)
 			}
+			// Clear buffer to avoid leftovers
+			buf[0], buf[1], buf[2] = 0, 0, 0
 			state.Mu.Unlock()
 		}
 	}

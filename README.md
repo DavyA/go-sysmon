@@ -16,15 +16,18 @@ A lightweight, high-performance terminal system monitor written in **Go**. Desig
 ## ✨ Key Features
 
 - **📊 Real-time CPU Tracking**: Per-core usage monitoring with high-resolution historical graphs.
-- **🌡️ Thermal Awareness**: Detailed temperature monitoring for CPU packages and cores.
-- **🎮 GPU Insights**: Native support for **NVIDIA (NVML)** and open-source drivers (AMD/Intel), displaying utilization, VRAM, and power draw.
+- **🌡️ Thermal & Power Monitoring**: Comprehensive dashboard for CPU/GPU temperatures, battery status, and total system power consumption.
+- **🎮 GPU Insights**: Native support for **NVIDIA (NVML)** and open-source drivers (AMD/Intel), displaying model info, utilization, VRAM, and power draw.
 - **🧠 Memory & Swap**: Precision monitoring of RAM and Swap usage.
 - **🌐 Network Traffic**: Real-time ingress/egress speed monitoring per interface.
+- **💀 Interactive Process Manager**: 
+  - Full-featured PID view with interactive navigation.
+  - Resource usage breakdown (CPU, Memory, GPU).
+  - Ability to terminate processes directly from the TUI.
 - **🖥️ Responsive TUI**: 
-  - Dynamic layout adaptation based on terminal size.
-  - "Alternate Buffer" support for a clean exit without cluttering your terminal history.
-  - Fast, flicker-free rendering using optimized ANSI sequences.
-- **🐧 System Info**: Built-in "Neofetch" style dashboard with stylized OS logos.
+  - "Neofetch" meets "Archey" dashboard aesthetics with high-quality ASCII logos.
+  - Flicker-free rendering using atomic string buffers (double-buffering).
+  - Fast, responsive layout adaptation to terminal resizing.
 
 ---
 
@@ -70,11 +73,23 @@ Navigate through different views using your keyboard:
 | Key | Action |
 |-----|--------|
 | `1` | **Dashboard**: Overview of CPU, RAM, and History |
-| `2` | **CPU View**: Detailed per-core monitoring (WIP) |
-| `3` | **GPU View**: Dedicated GPU statistics and graphs |
-| `4` | **Process View**: Top processes and PID info (WIP) |
-| `5` | **Info**: System summary and OS branding |
+| `2` | **CPU View**: Detailed per-core monitoring |
+| `3` | **GPU View**: Dedicated GPU statistics, model info, and graphs |
+| `4` | **Process View**: Interactive PID list (Kill with `k`, Nav with `Arrows`) |
+| `5` | **Info**: System summary and enhanced OS branding |
 | `Q` | **Quit**: Cleanly restore terminal state and exit |
+
+---
+
+## 📈 Understanding the Process View
+
+The **Process View (4)** is highly functional, allowing direct system management:
+
+- **Navigation**: Use **Up/Down arrows** to select a process.
+- **Termination**: Press **`k`** to send a SIGTERM to the selected process.
+- **Resource Details**: See real-time Memory (RSS), CPU usage, and **GPU activity flags `[G]`**.
+- **CPU% Metric**: CPU usage is reported as the percentage of a **single core's capacity**. 
+  - *Example*: A process showing **100%** is fully utilizing one CPU core. On an 8-core system, a process can theoretically reach **800%**.
 
 ---
 
@@ -82,10 +97,10 @@ Navigate through different views using your keyboard:
 
 The project follows a modular "Collector-Renderer" architecture:
 
-1.  **Collectors**: Independent modules (`collector/`) gather system data using `/proc` filesystem, `sysfs`, and vendor-specific APIs (like NVML).
-2.  **State Management**: A centralized, thread-safe `SystemState` (`utils/systemstate.go`) aggregates data from various concurrent sources.
-3.  **Engine**: The main loop coordinates timing using tickers and triggers re-renders on data updates or terminal resize events.
-4.  **TUI Engine**: Custom rendering logic in `utils/render.go` handles ASCII art, colored bars, and adaptive layouts.
+1.  **Collectors**: Independent modules (`collector/`) gather system data using `/proc`, `sysfs`, and native GPU queries without external dependencies.
+2.  **State Management**: A centralized, thread-safe `SystemState` aggregates data from various concurrent sources.
+3.  **Flicker-Free Engine**: Implements a "double-buffering" approach where the entire frame is built in memory using `strings.Builder` and printed in a single atomic operation.
+4.  **TUI System**: Custom rendering logic in `utils/render.go` handles ASCII art, colored bars, and adaptive layouts with interactive input handling.
 
 ---
 

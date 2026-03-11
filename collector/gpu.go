@@ -79,6 +79,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -249,6 +250,24 @@ func GetAllGPUs() []GPUStatus {
 	}
 
 	return gpus
+}
+
+func GetGpuPIDs() map[int]bool {
+	pids := make(map[int]bool)
+
+	// DRM Clients (Mostly AMD/Intel on newer kernels)
+	clients, _ := filepath.Glob("/sys/class/drm/card*/clients/*/pid")
+	for _, c := range clients {
+		data, err := os.ReadFile(c)
+		if err == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			if pid > 0 { pids[pid] = true }
+		}
+	}
+
+	// NVIDIA specific if NVML not available or just proxy via lsof-style file scan
+	// We only do this check for some active processes to keep it fast, or if sysfs failed.
+	return pids
 }
 
 // GetGPUState background ticker

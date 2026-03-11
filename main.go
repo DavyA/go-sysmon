@@ -46,6 +46,7 @@ func main() {
 	gpuTicker, gpuTicker_stop := immediateTicker(Millisecond * time.Millisecond)
 	batTicker, batTicker_stop := immediateTicker(5 * Millisecond * time.Millisecond) // Battery every 5s
 	diskTicker, diskTicker_stop := immediateTicker(10 * Millisecond * time.Millisecond) // Disk every 10s
+	pidTicker, pidTicker_stop := immediateTicker(2 * Millisecond * time.Millisecond) // PIDs every 2s
 
 	defer cpuTicker_stop()
 	defer tempTicker_stop()
@@ -55,6 +56,7 @@ func main() {
 	defer gpuTicker_stop()
 	defer batTicker_stop()
 	defer diskTicker_stop()
+	defer pidTicker_stop()
 
 	cpuTracker := collector.NewCpuTracker()
 	cpuChan := cpuTracker.GetCPUUsage(ctx, cpuTicker)
@@ -64,6 +66,8 @@ func main() {
 	gpuChan := collector.GetGPUState(ctx, gpuTicker)
 	batChan := collector.GetBatteryState(ctx, batTicker)
 	diskChan := collector.GetDiskState(ctx, diskTicker)
+	pidTracker := collector.NewProcessTracker()
+	pidChan := pidTracker.GetProcessState(ctx, pidTicker)
 
 	// Inizializziamo lo stato
 	state := &utils.SystemState{
@@ -188,6 +192,20 @@ func main() {
 			case disks := <-diskChan:
 				state.Mu.Lock()
 				state.Disks = disks
+				state.Mu.Unlock()
+			}
+		}
+	}()
+
+	// 8. Goroutine per aggiornamento PIDs
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case pids := <-pidChan:
+				state.Mu.Lock()
+				state.Processes = pids
 				state.Mu.Unlock()
 			}
 		}
