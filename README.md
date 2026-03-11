@@ -6,6 +6,8 @@
 
 A lightweight, high-performance terminal system monitor written in **Go**. Designed for developers and system administrators who want a clean, responsive, and efficient way to monitor their Linux systems without the overhead of heavy dependencies.
 
+![Go-Sysmon Info View](assets/screenshot-info.png)
+
 > [!NOTE] 
 > This project was built from the ground up using raw ANSI escape codes and manual terminal state management, showcasing low-level system interaction and concurrent programming in Go.
 
