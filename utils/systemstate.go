@@ -56,6 +56,8 @@ type SystemState struct {
 	Model       string
 	PCI         []collector.PciDevice
 	GPUs        []collector.GPUStatus
+	Battery     collector.BatteryStats
+	Disks       []collector.Partition
 	CPUHistory  []float64
 	GPUHistory  map[string][]float64
 	CurrentView ViewMode
@@ -73,7 +75,7 @@ const (
 	ViewInfo
 )
 
-func RenderNeofetch(s *SystemState) {
+func RenderNeofetch(s *SystemState, sb *strings.Builder) {
 	s.Mu.Lock()
 	if s.cachedOS == "" {
 		s.cachedOS = getOSName()
@@ -134,21 +136,21 @@ func RenderNeofetch(s *SystemState) {
 		fmt.Sprintf("%s%sCPU:%s %s", c, b, r, strings.TrimSpace(cpuMod)),
 		fmt.Sprintf("%s%sMemory:%s %d MiB / %d MiB", c, b, r, usedRam, totalRam),
 		"",
-		"\033[40m   \033[41m   \033[42m   \033[43m   \033[44m   \033[45m   \033[46m   \033[47m   \033[0m",
+		"\033[40m   \033[41m   \033[42m   \033[43m   \033[44m   \033[45m   \033[46m   \033[0m",
 	}
 
-	fmt.Printf("\r\n") // Spazio sopra
+	sb.WriteString("\r\n") // Spazio sopra
 	for i := 0; i < len(lines); i++ {
 		infoStr := ""
 		if i < len(infos) {
 			infoStr = "  " + infos[i]
 		}
 
-		fmt.Printf("%s%-25s%s %s\r\n", logoObj.Color, lines[i], Reset, infoStr)
+		sb.WriteString(fmt.Sprintf("%s%-25s%s %s\r\n", logoObj.Color, lines[i], Reset, infoStr))
 	}
 
 	// Se infos è più lungo del logo
 	for i := len(lines); i < len(infos); i++ {
-		fmt.Printf("%-25s   %s\r\n", "", infos[i])
+		sb.WriteString(fmt.Sprintf("%-25s   %s\r\n", "", infos[i]))
 	}
 }

@@ -44,6 +44,8 @@ func main() {
 	displayTicker, displayTicker_stop := immediateTicker(Millisecond * time.Millisecond)
 	memTicker, memTicker_stop := immediateTicker(Millisecond * time.Millisecond)
 	gpuTicker, gpuTicker_stop := immediateTicker(Millisecond * time.Millisecond)
+	batTicker, batTicker_stop := immediateTicker(5 * Millisecond * time.Millisecond) // Battery every 5s
+	diskTicker, diskTicker_stop := immediateTicker(10 * Millisecond * time.Millisecond) // Disk every 10s
 
 	defer cpuTicker_stop()
 	defer tempTicker_stop()
@@ -51,6 +53,8 @@ func main() {
 	defer displayTicker_stop()
 	defer memTicker_stop()
 	defer gpuTicker_stop()
+	defer batTicker_stop()
+	defer diskTicker_stop()
 
 	cpuTracker := collector.NewCpuTracker()
 	cpuChan := cpuTracker.GetCPUUsage(ctx, cpuTicker)
@@ -58,6 +62,8 @@ func main() {
 	netChan := collector.GetNetSpeed(ctx, netTicker)
 	memChan := collector.GetSystemState(ctx, memTicker)
 	gpuChan := collector.GetGPUState(ctx, gpuTicker)
+	batChan := collector.GetBatteryState(ctx, batTicker)
+	diskChan := collector.GetDiskState(ctx, diskTicker)
 
 	// Inizializziamo lo stato
 	state := &utils.SystemState{
@@ -77,15 +83,17 @@ func main() {
 				state.CPUStats = stats
 				// Calcola la media totale dei core
 				var total float64
-				for _, c := range stats.CpuCores {
-					total += c.Usage
-				}
-				avg := total / float64(len(stats.CpuCores))
+				if len(stats.CpuCores) > 0 {
+					for _, c := range stats.CpuCores {
+						total += c.Usage
+					}
+					avg := total / float64(len(stats.CpuCores))
 
-				// Mantieni la cronologia (es. ultimi 100 campioni)
-				state.CPUHistory = append(state.CPUHistory, avg)
-				if len(state.CPUHistory) > 100 {
-					state.CPUHistory = state.CPUHistory[1:]
+					// Mantieni la cronologia (es. ultimi 100 campioni)
+					state.CPUHistory = append(state.CPUHistory, avg)
+					if len(state.CPUHistory) > 100 {
+						state.CPUHistory = state.CPUHistory[1:]
+					}
 				}
 				state.Mu.Unlock()
 			}
@@ -157,6 +165,34 @@ func main() {
 		}
 	}()
 
+	// 6. Goroutine per aggiornamento Batteria
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case bat := <-batChan:
+				state.Mu.Lock()
+				state.Battery = bat
+				state.Mu.Unlock()
+			}
+		}
+	}()
+
+	// 7. Goroutine per aggiornamento Disk
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case disks := <-diskChan:
+				state.Mu.Lock()
+				state.Disks = disks
+				state.Mu.Unlock()
+			}
+		}
+	}()
+
 	// Nel Main:
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGWINCH)
@@ -182,10 +218,8 @@ func main() {
 	for {
 		select {
 		case <-RedrawChan:
-			clearScreen()
 			state.Render()
 		case <-displayTicker:
-			clearScreen()
 			state.Render()
 
 		}
@@ -278,9 +312,7 @@ func createBar(percent int) string {
 	return bar
 }
 
-func clearScreen() {
-	fmt.Print("\033[H\033[J")
-}
+
 
 func immediateTicker(d time.Duration) (<-chan time.Time, func()) {
 	t := time.NewTicker(d)

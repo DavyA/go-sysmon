@@ -33,7 +33,7 @@ A lightweight, high-performance terminal system monitor written in **Go**. Desig
 - **Language**: Go (Golang)
 - **Concurrency**: Heavy use of Goroutines and Channels for non-blocking data collection.
 - **Low-Level**: Direct `ioctl` syscalls for terminal size detection and raw mode management.
-- **Zero Dependencies**: Core logic relies minimal external libraries, ensuring a tiny binary size.
+- **Zero Dependencies**: Core logic relies on minimal external libraries, ensuring a tiny binary size.
 
 ---
 
@@ -91,7 +91,7 @@ The project follows a modular "Collector-Renderer" architecture:
 
 ## 🧪 Development & Contribution
 
-I built this project to demonstrate performance-oriented Go development. Contributions, issues, and feature requests are welcome!
+I built this project to demonstrate performance-oriented Go development and bridge the gap between low-level OS internals and modern observability. Contributions, issues, and feature requests are welcome!
 
 1. Fork the project.
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`).

@@ -14,217 +14,271 @@ func HandleResize(sigChan chan os.Signal, redrawChan chan bool) {
 
 func (s *SystemState) Render() {
 	cols, rows := GetTermSize()
-	// 1. HEADER (Sempre visibile)
-	renderHeader(s, cols)
+	var sb strings.Builder
 
-	switch s.CurrentView {
-	case ViewDashboard:
-		renderSideBySide(s, cols)
-		// ... aggiungi grafico ...
-	case ViewGPU:
-		RenderGPU(s, cols)
-	case ViewPIDs:
-		fmt.Printf("\r\n  %s[ Processes View - Under Construction ]%s\r\n", Cyan, Reset)
-	case ViewInfo:
-		RenderNeofetch(s)
-	case ViewCPU:
-		fmt.Printf("\r\n  %s[ Advanced CPU View - Under Construction ]%s\r\n", Cyan, Reset)
-		//renderFullCPUView(s, cols) // Una vista con grafici per ogni core!
+	// ANSI: Move Home and Clear Screen (Atomic Double-Buffering)
+	sb.WriteString("\033[H\033[2J")
+
+	// 1. HEADER (Sempre visibile)
+	renderHeader(s, cols, &sb)
+
+	if rows < 10 || cols < 40 {
+		sb.WriteString("\r\n  Terminal too small!\r\n")
+	} else {
+		switch s.CurrentView {
+		case ViewDashboard:
+			renderSideBySide(s, cols, &sb)
+		case ViewGPU:
+			RenderGPU(s, cols, &sb)
+		case ViewPIDs:
+			sb.WriteString(fmt.Sprintf("\r\n  %s[ Processes View - Under Construction ]%s\r\n", Cyan, Reset))
+		case ViewInfo:
+			RenderNeofetch(s, &sb)
+		case ViewCPU:
+			sb.WriteString(fmt.Sprintf("\r\n  %s[ Advanced CPU View - Under Construction ]%s\r\n", Cyan, Reset))
+		}
 	}
 
-	renderFooter(s, cols, rows)
+	renderFooter(s, cols, rows, &sb)
 
-	/*
-			// 2. LOGICA ADATTIVA: Affiancare o Incolonnare?
-			// Se la finestra è larga > 100 colonne, mettiamo CPU e RAM affiancate
-			if cols > 100 {
-				renderSideBySide(s, cols)
-			} else {
-				// TODO: Implementare il layout stacked
-				fmt.Println("Finestra troppo stretta per il layout avanzato.")
-				//renderStacked(s, cols)
-			}
-
-		// 3. IL GRAFICO (Larghezza dinamica)
-		// Usiamo tutta la larghezza disponibile per il grafico
-		graphWidth := cols - 62
-		tRow, midRow, bRow := CreateSolidGraph(s.CPUHistory, graphWidth)
-
-		if rows > 15 { // Mostra il grafico solo se c'è abbastanza spazio verticale
-			fmt.Printf("\n [ CPU HISTORY (W:%d) ]\n", graphWidth)
-			fmt.Printf("  %s\n  %s\n  %s\n", tRow, midRow, bRow)
-		}
-	*/
+	// Flush the buffer to stdout
+	fmt.Print(sb.String())
 }
 
-func renderSideBySide(s *SystemState, cols int) {
-	// Definiamo i pesi: 60% spazio alla CPU, 40% alla RAM
-	cpuWidth := (cols * 60) / 100
-	memWidth := cols - cpuWidth - 4 // -4 per i bordi e separatori
+func renderSideBySide(s *SystemState, cols int, sb *strings.Builder) {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
 
-	// Prepariamo le "colonne" di testo
+	totalPower := s.CPUStats.PackagePower
+	for _, g := range s.GPUs { totalPower += g.Power }
+	maxTemp := 0.0; for _, t := range s.CPUTemp { if t > maxTemp { maxTemp = t } }
+	
+	sysPower := totalPower
+	if s.Battery.Present && s.Battery.Status == "Discharging" && s.Battery.Power > 0 {
+		sysPower = s.Battery.Power
+	}
+
+	batStatus := "AC"
+	if s.Battery.Present {
+		icon := "⚡"
+		if s.Battery.Status == "Discharging" { icon = "🔋" }
+		batStatus = fmt.Sprintf("%d%% %s", s.Battery.Capacity, icon)
+	}
+
+	summary := fmt.Sprintf(" %sSYS PWR: %.1f W%s | %sTEMP: %.1f°C%s | %sBAT: %s%s | %sUP: %s%s",
+		Bold, sysPower, Reset, Bold, maxTemp, Reset, Bold, batStatus, Reset, Bold, getUptime(), Reset)
+
+	sb.WriteString(fmt.Sprintf("\r\n  %s\r\n", summary))
+	sb.WriteString(fmt.Sprintf("  %s%s%s\r\n", Gray, strings.Repeat("┈", cols-4), Reset)) // 1. Definiamo i pesi: W1+W2 = cols - 7
+	available := cols - 7
+	if available < 10 {
+		return
+	}
+
+	cpuWidth := (available * 60) / 100
+	if cpuWidth > 80 {
+		cpuWidth = 80
+	}
+	memWidth := available - cpuWidth
+
 	cpuLines := []string{}
 	memLines := []string{}
 
-	// 1. Popoliamo la colonna CPU
-
-	// Ricerca la temp della CPU principale (Tctl / Package)
-	maxTemp := 0.0
-	for k, t := range s.CPUTemp {
-		if strings.Contains(strings.ToLower(k), "tctl") || strings.Contains(strings.ToLower(k), "package") || t > maxTemp {
-			maxTemp = t
-		}
-	}
-
-	// Riga riassuntiva di Package
-	summaryLine := ""
-	if maxTemp > 0 {
-		summaryLine += fmt.Sprintf(" Package Temp: %.1f °C ", maxTemp)
-	}
-	if s.CPUStats.PackagePower > 0 {
-		summaryLine += fmt.Sprintf("|  Power: %.2f W", s.CPUStats.PackagePower)
-	}
-	if summaryLine != "" {
-		cpuLines = append(cpuLines, summaryLine)
-		cpuLines = append(cpuLines, "") // separator
-	}
-
-	// Aggiungiamo i core (2 per riga)
+	// CPU Cores - 2 per riga
 	for i := 0; i < len(s.CPUStats.CpuCores); i += 2 {
 		line := ""
-		// Core A
 		c1 := s.CPUStats.CpuCores[i]
-		bar1 := CreateSolidBar(c1.Usage) // bar di 10 char
-		line += fmt.Sprintf("%-5s [%s] %3.0f%% ", c1.ID, bar1, c1.Usage)
-
-		// Core B (se esiste)
+		line += fmt.Sprintf("%-5s [%s] %2.0f%%", c1.ID, CreateSolidBar(c1.Usage), c1.Usage)
 		if i+1 < len(s.CPUStats.CpuCores) {
 			c2 := s.CPUStats.CpuCores[i+1]
-			bar2 := CreateSolidBar(c2.Usage)
-			line += fmt.Sprintf(" | %-5s [%s] %3.0f%%", c2.ID, bar2, c2.Usage)
+			line += fmt.Sprintf(" | %-5s [%s] %2.0f%%", c2.ID, CreateSolidBar(c2.Usage), c2.Usage)
 		}
 		cpuLines = append(cpuLines, line)
 	}
 
-	// 2. Popoliamo la colonna RAM/SWAP
+	// Memoria
 	memPercent := (float64(s.Memory.MemUsed) / float64(s.Memory.MemTotal)) * 100
-	memLines = append(memLines, fmt.Sprintf("RAM  [%s] %v%%", CreateSolidBar(memPercent), int(memPercent)))
-	memLines = append(memLines, fmt.Sprintf("Used: %v / %v MB", s.Memory.MemUsed, s.Memory.MemTotal))
-
+	memLines = append(memLines, fmt.Sprintf("RAM  [%s] %d%%", CreateSolidBar(memPercent), int(memPercent)))
+	memLines = append(memLines, fmt.Sprintf("Used: %d / %d MB", s.Memory.MemUsed, s.Memory.MemTotal))
 	if s.Memory.SwapTotal > 0 {
-		swapPercent := (float64(s.Memory.SwapUsed) / float64(s.Memory.SwapTotal)) * 100
-		memLines = append(memLines, "") // Spazio vuoto
-		memLines = append(memLines, fmt.Sprintf("SWAP [%s] %v%%", CreateSolidBar(swapPercent), int(swapPercent)))
+		swapPct := (float64(s.Memory.SwapUsed) / float64(s.Memory.SwapTotal)) * 100
+		memLines = append(memLines, fmt.Sprintf("SWAP [%s] %d%%", CreateSolidBar(swapPct), int(swapPct)))
 	}
 
-	// 3. MERGE delle colonne (La parte difficile)
-	// Troviamo chi ha più righe per non tagliare nulla
+	// GPU
+	if len(s.GPUs) > 0 {
+		memLines = append(memLines, "")
+		for _, g := range s.GPUs {
+			memLines = append(memLines, fmt.Sprintf("GPU %s: %2.0f%% | %.1fW", g.ID, g.Utilization, g.Power))
+		}
+	}
+
+	// Network
+	rx, tx := 0.0, 0.0
+	for _, ni := range s.NetStats {
+		rx += ni.RxSpeed
+		tx += ni.TxSpeed
+	}
+	if rx > 0 || tx > 0 {
+		memLines = append(memLines, "")
+		memLines = append(memLines, fmt.Sprintf("NET RX: %s%.2f MB/s%s", Cyan, rx, Reset))
+		memLines = append(memLines, fmt.Sprintf("NET TX: %s%.2f MB/s%s", Cyan, tx, Reset))
+	}
+
+	// Disks
+	if len(s.Disks) > 0 {
+		memLines = append(memLines, "")
+		for _, d := range s.Disks {
+			if d.MountPoint == "/" || d.MountPoint == "/home" {
+				memLines = append(memLines, fmt.Sprintf("DISK %-5s %2.0f%% [%dGB]", d.MountPoint, d.Percent, d.Total/1024))
+			}
+		}
+	}
+
 	maxLines := len(cpuLines)
 	if len(memLines) > maxLines {
 		maxLines = len(memLines)
 	}
 
-	cpuTitle := "CPU CORES"
-	memTitle := "MEMORY"
-
-	cpuPadding := (cpuWidth - len(cpuTitle)) / 2
-	memPadding := (memWidth - len(memTitle)) / 2
-
-	fmt.Printf("%s┌%s%s%s┬%s%s%s┐%s\r\n", Blue, strings.Repeat("─", cpuPadding), cpuTitle, strings.Repeat("─", cpuPadding), strings.Repeat("─", memPadding), memTitle, strings.Repeat("─", memPadding), Reset)
-
-	for i := 0; i < maxLines; i++ {
-		left := ""
-		if i < len(cpuLines) {
-			left = cpuLines[i]
-		}
-
-		right := ""
-		if i < len(memLines) {
-			right = memLines[i]
-		}
-
-		// Stampiamo le due parti con padding preciso
-		fmt.Printf("%s│ %s%-*s %s│ %s%-*s %s│%s\r\n",
-			Blue, Reset, cpuWidth, left, Blue, Reset, memWidth, right, Blue, Reset)
+	formatTitle := func(title string, width int) string {
+		vLen := VisibleLen(title)
+		left := (width - vLen) / 2
+		right := width - vLen - left
+		if left < 0 { left = 0 }
+		if right < 0 { right = 0 }
+		return strings.Repeat("─", left) + title + strings.Repeat("─", right)
 	}
-	fmt.Printf("%s└%s┴%s┘%s\r\n", Blue, strings.Repeat("─", cpuWidth), strings.Repeat("─", memWidth), Reset)
+
+	// Border Top
+	sb.WriteString(fmt.Sprintf("%s┌%s┬%s┐%s\r\n", Blue, formatTitle(" CPU CORES ", cpuWidth+2), formatTitle(" SYSTEM ", memWidth+2), Reset))
+
+	if maxLines == 0 {
+		// Placeholder row
+		sb.WriteString(fmt.Sprintf("%s│ %s", Blue, Reset))
+		writePadded(sb, "Collecting metrics...", cpuWidth)
+		sb.WriteString(fmt.Sprintf(" %s│ %s", Blue, Reset))
+		writePadded(sb, "...", memWidth)
+		sb.WriteString(fmt.Sprintf(" %s│%s\r\n", Blue, Reset))
+	} else {
+		for i := 0; i < maxLines; i++ {
+			lLine, rLine := "", ""
+			if i < len(cpuLines) { lLine = cpuLines[i] }
+			if i < len(memLines) { rLine = memLines[i] }
+
+			sb.WriteString(fmt.Sprintf("%s│ %s", Blue, Reset))
+			writePadded(sb, lLine, cpuWidth)
+			sb.WriteString(fmt.Sprintf(" %s│ %s", Blue, Reset))
+			writePadded(sb, rLine, memWidth)
+			sb.WriteString(fmt.Sprintf(" %s│%s\r\n", Blue, Reset))
+		}
+	}
+
+	// Border Bottom
+	sb.WriteString(fmt.Sprintf("%s└%s┴%s┘%s\r\n", Blue, strings.Repeat("─", cpuWidth+2), strings.Repeat("─", memWidth+2), Reset))
 }
 
-func renderFooter(state *SystemState, cols int, rows int) {
-	// Ci spostiamo all'ultima riga
-	fmt.Printf("\033[%d;1H", rows)
+func writePadded(sb *strings.Builder, text string, width int) {
+	vLen := VisibleLen(text)
+
+	if vLen > width && width > 3 {
+		sb.WriteString(text)
+	} else {
+		sb.WriteString(text)
+		if width > vLen {
+			sb.WriteString(strings.Repeat(" ", width-vLen))
+		}
+	}
+}
+
+func VisibleLen(text string) int {
+	visibleLen := 0
+	inEsc := false
+	for _, r := range text {
+		if r == '\033' {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		visibleLen++
+	}
+	return visibleLen
+}
+
+
+func renderFooter(state *SystemState, cols int, rows int, sb *strings.Builder) {
+	sb.WriteString(fmt.Sprintf("\033[%d;1H", rows))
 
 	tabs := []string{"[1] Dash", "[2] CPU", "[3] GPU", "[4] PIDs", "[5] Info"}
 	footer := ""
 
 	for i, t := range tabs {
 		if int(state.CurrentView) == i {
-			footer += fmt.Sprintf("\033[44;37m %s \033[0m ", t) // Blu per attiva
+			footer += fmt.Sprintf("\033[44;37m %s \033[0m ", t) 
 		} else {
-			footer += fmt.Sprintf("\033[90m %s \033[0m ", t) // Grigio per inattiva
+			footer += fmt.Sprintf("\033[90m %s \033[0m ", t) 
 		}
 	}
 
-	// Riempiamo il resto della riga con spazio nero
-	padding := cols - len(tabs)*11 // calcolo approssimativo
-	fmt.Printf("%s%*s\033[0m", footer, padding, "Q:Quit")
+	vLen := VisibleLen(footer)
+	padding := cols - vLen - 7
+	if padding < 0 { padding = 0 }
+	sb.WriteString(fmt.Sprintf("%s%*s\033[0m", footer, padding, "Q:Quit"))
 }
 
-func renderHeader(s *SystemState, cols int) {
+func renderHeader(s *SystemState, cols int, sb *strings.Builder) {
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
-	fmt.Printf("┌%s┐\r\n", strings.Repeat("─", cols-2))
+	sb.WriteString(fmt.Sprintf("┌%s┐\r\n", strings.Repeat("─", cols-2)))
 	header := fmt.Sprintf(" HOST: %s | CPU: %s ", s.Hostname, s.Model)
 	if len(header) > cols-4 {
-		header = header[:cols-7] + "..." // Taglia se la finestra è stretta
+		header = header[:cols-7] + "..." 
 	}
-	fmt.Printf("│ %-*s │\r\n", cols-4, header)
-	fmt.Printf("└%s┘\r\n", strings.Repeat("─", cols-2))
+	sb.WriteString(fmt.Sprintf("│ %-*s │\r\n", cols-4, header))
+	sb.WriteString(fmt.Sprintf("└%s┘\r\n", strings.Repeat("─", cols-2)))
 }
 
-func RenderGPU(s *SystemState, cols int) {
+func RenderGPU(s *SystemState, cols int, sb *strings.Builder) {
 	s.Mu.RLock()
 	gpus := s.GPUs
 	history := s.GPUHistory
 	s.Mu.RUnlock()
 
 	if len(gpus) == 0 {
-		fmt.Printf("\r\n  %sNo GPUs directly detected/supported.%s\r\n", Red, Reset)
+		sb.WriteString(fmt.Sprintf("\r\n  %sNo GPUs directly detected/supported.%s\r\n", Red, Reset))
 	} else {
 		for _, g := range gpus {
-			fmt.Printf("\r\n  %s[%s] %s%s\r\n", Cyan, g.ID, g.Name, Reset)
+			sb.WriteString(fmt.Sprintf("\r\n  %s[%s] %s%s\r\n", Cyan, g.ID, g.Name, Reset))
 
-			// Statistiche principali
-			fmt.Printf("  Driver: %s | Vendor: %s\r\n", g.Driver, g.Vendor)
+			sb.WriteString(fmt.Sprintf("  Driver: %s | Vendor: %s\r\n", g.Driver, g.Vendor))
 			if g.Power > 0 {
-				fmt.Printf("  Power:  %s%.2f W%s  | Temp: %s%.1f°C%s\r\n", Bold, g.Power, Reset, Bold, g.Temp, Reset)
+				sb.WriteString(fmt.Sprintf("  Power:  %s%.2f W%s  | Temp: %s%.1f°C%s\r\n", Bold, g.Power, Reset, Bold, g.Temp, Reset))
 			} else if g.Temp > 0 {
-				fmt.Printf("  Temp:   %s%.1f°C%s\r\n", Bold, g.Temp, Reset)
+				sb.WriteString(fmt.Sprintf("  Temp:   %s%.1f°C%s\r\n", Bold, g.Temp, Reset))
 			}
 
-			// Usage Bar
 			barGraph := CreateSolidBar(g.Utilization)
-			fmt.Printf("  Load:   [%s] %3.0f%%\r\n", barGraph, g.Utilization)
+			sb.WriteString(fmt.Sprintf("  Load:   [%s] %3.0f%%\r\n", barGraph, g.Utilization))
 
-			// Graph History (if initialized)
 			if hist, exists := history[g.ID]; exists && len(hist) > 0 {
 				graphWidth := cols - 16
 				if graphWidth > 10 {
 					tRow, midRow, bRow := CreateSolidGraph(hist, graphWidth)
-					fmt.Printf("          %s\r\n", tRow)
-					fmt.Printf("          %s\r\n", midRow)
-					fmt.Printf("          %s\r\n", bRow)
+					sb.WriteString(fmt.Sprintf("          %s\r\n", tRow))
+					sb.WriteString(fmt.Sprintf("          %s\r\n", midRow))
+					sb.WriteString(fmt.Sprintf("          %s\r\n", bRow))
 				}
 			}
 
-			// VRAM Bar
 			if g.MemTotal > 0 {
 				memPct := (float64(g.MemUsed) / float64(g.MemTotal)) * 100
-				if memPct > 100 {
-					memPct = 100
-				}
+				if memPct > 100 { memPct = 100 }
 				memBar := CreateSolidBar(memPct)
-				fmt.Printf("  VRAM:   [%s] %d / %d MB\r\n", memBar, g.MemUsed, g.MemTotal)
+				sb.WriteString(fmt.Sprintf("  VRAM:   [%s] %d / %d MB\r\n", memBar, g.MemUsed, g.MemTotal))
 			}
 		}
 	}
