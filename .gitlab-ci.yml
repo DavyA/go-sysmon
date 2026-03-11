@@ -1,4 +1,4 @@
-image: golang:1.25.6  # Matching the version in go.mod
+image: golang:1.24.0  # Matching the version in go.mod
 
 stages:
   - lint
