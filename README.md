@@ -1,4 +1,7 @@
 # 🚀 Go-Sysmon: Advanced Terminal System Monitor
+<p align="center">
+  <img src="assets/logo.svg" alt="Go-Sysmon Logo" width="250">
+</p>
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/DavyA/go-sysmon)](https://goreportcard.com/report/github.com/DavyA/go-sysmon)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/DavyA/go-sysmon)](https://github.com/DavyA/go-sysmon/blob/main/go.mod)
